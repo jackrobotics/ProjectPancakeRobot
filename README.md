@@ -43,6 +43,18 @@
 
 0xFF 0xFF -> Header
 0x02 -> length
-0x03 -> instruction
+0x04 -> instruction
 0xFC -> checksum
+```
+
+## rotary tray protocol : 
+```
+0xFF 0xFF 0x04 0x05 [dir] [step] [checksum]
+
+0xFF 0xFF -> Header
+0x04 -> length
+0x05 -> instruction
+[dir] -> 0,1
+[step] -> step increment
+[checksum] -> checksum
 ```
