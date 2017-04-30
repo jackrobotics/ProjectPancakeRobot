@@ -1,8 +1,6 @@
 #include <Servo.h>
 #include <TimerOne.h>
 
-#define DEBUG 1
-
 #define MAGNET_PIN 14
 #define limitY digitalRead(53)
 #define limitA digitalRead(52)
@@ -24,6 +22,7 @@ struct CONTROL
   int Y = 0;        //Step Y
   int A = 0;        //Step A
   int B = 0;        //Step B
+  int C = 0;
   int S = 0;        //Servo
   bool M = false;   //Magnet
 };
@@ -35,8 +34,11 @@ STEPMOTOR STEPPER_Y;
 STEPMOTOR STEPPER_A;
 STEPMOTOR STEPPER_B;
 
+STEPMOTOR STEPPER_C;
+
 bool gotoHomePosition = false;
 
+bool c_dir = false;
 
 void setup()
 {
@@ -46,6 +48,14 @@ void setup()
   Timer1.initialize(100000);
   Timer1.attachInterrupt(serialRead);
   noInterrupts();
+
+
+  STEPPER_C.pin = 49;
+  STEPPER_C.dir = 51;
+  STEPPER_C.en = 47;
+  pinMode(STEPPER_C.pin,OUTPUT);
+  pinMode(STEPPER_C.dir,OUTPUT);
+  pinMode(STEPPER_C.en,OUTPUT);
 
   STEPPER_Y.pin = 25;
   STEPPER_Y.dir = 27;
@@ -70,6 +80,7 @@ void setup()
   pinMode(9,INPUT_PULLUP);
   pinMode(8,INPUT_PULLUP);
   pinMode(7,INPUT_PULLUP);
+  pinMode(6,INPUT_PULLUP);
 
   interrupts();
 }
@@ -84,6 +95,7 @@ void loop()
   digitalWrite(STEPPER_Y.en,digitalRead(9));
   digitalWrite(STEPPER_A.en,digitalRead(8));
   digitalWrite(STEPPER_B.en,digitalRead(7));
+  digitalWrite(STEPPER_C.en,digitalRead(6));
   
   GRIPPER.write(Target.S);
   digitalWrite(MAGNET_PIN,Target.M? HIGH:LOW);
@@ -91,22 +103,22 @@ void loop()
   
   if(gotoHomePosition)
   {
-    if(limitY)
-    {
-      digitalWrite(STEPPER_Y.dir,HIGH);
-      digitalWrite(STEPPER_Y.pin,HIGH);
-    }
     if(limitA)
     {
       digitalWrite(STEPPER_A.dir,HIGH);
       digitalWrite(STEPPER_A.pin,HIGH);
-    }
-    if(limitB)
+      delayMicroseconds(10000);
+    }else if(limitB)
     {
       digitalWrite(STEPPER_B.dir,HIGH);
       digitalWrite(STEPPER_B.pin,HIGH);
+      delayMicroseconds(10000);
+    }else if(limitY)
+    {
+      digitalWrite(STEPPER_Y.dir,HIGH);
+      digitalWrite(STEPPER_Y.pin,HIGH);
+      delayMicroseconds(2000);
     }
-    delayMicroseconds(10000);
     if(limitY)digitalWrite(STEPPER_Y.pin,LOW);
     if(limitA)digitalWrite(STEPPER_A.pin,LOW);
     if(limitB)digitalWrite(STEPPER_B.pin,LOW);
@@ -117,13 +129,18 @@ void loop()
       Position.Y=0;
       Position.A=0;
       Position.B=0;
+      Position.C=0;
+      Target.Y=0;
+      Target.A=0;
+      Target.B=0;
+      Target.C=0;
     }
     return;
   }
 
-  if(!limitY)Position.Y=0;
-  if(!limitA)Position.A=0;
-  if(!limitB)Position.B=0;
+  if(!limitY){Position.Y=0;}
+  if(!limitA){Position.A=0;}
+  if(!limitB){Position.B=0;}
 
   if(Target.Y-Position.Y != 0)
   {
@@ -141,10 +158,10 @@ void loop()
   if(Target.A-Position.A != 0)
   {
     if(Target.A-Position.A >= 0 ){
-      digitalWrite(STEPPER_A.dir,HIGH);
+      digitalWrite(STEPPER_A.dir,LOW);
       Position.A++;
     }else if(limitA){
-      digitalWrite(STEPPER_A.dir,LOW);
+      digitalWrite(STEPPER_A.dir,HIGH);
       Position.A--;
     }
     digitalWrite(STEPPER_A.pin,HIGH);
@@ -154,18 +171,30 @@ void loop()
   if(Target.B-Position.B != 0)
   {
     if(Target.B-Position.B >= 0 ){
-      digitalWrite(STEPPER_B.dir,HIGH);
+      digitalWrite(STEPPER_B.dir,LOW);
       Position.B++;
     }else if(limitB){
-      digitalWrite(STEPPER_B.dir,LOW);
+      digitalWrite(STEPPER_B.dir,HIGH);
       Position.B--;
     }
     digitalWrite(STEPPER_B.pin,HIGH);
   }else digitalWrite(STEPPER_B.pin,LOW);
-  delayMicroseconds(1500);
+
+  if(Position.C > 0)
+  {
+      if(c_dir)digitalWrite(STEPPER_C.dir,HIGH);
+      else digitalWrite(STEPPER_C.dir,LOW);
+      Position.C--;
+      digitalWrite(STEPPER_C.pin,HIGH);
+      delayMicroseconds(5000);
+  }else digitalWrite(STEPPER_C.pin,LOW);
+    
+  delayMicroseconds(1000);
   if(Target.Y-Position.Y != 0)digitalWrite(STEPPER_Y.pin,LOW);
   if(Target.A-Position.A != 0)digitalWrite(STEPPER_A.pin,LOW);
   if(Target.B-Position.B != 0)digitalWrite(STEPPER_B.pin,LOW);
+  if((Target.A-Position.A != 0) || (Target.B-Position.B != 0))delayMicroseconds(10000);
+  if(Target.C-Position.C != 0){digitalWrite(STEPPER_C.pin,LOW);delayMicroseconds(5000);}
   delayMicroseconds(1000);
 }
 
@@ -179,6 +208,7 @@ void protocol(){
     uint8_t dataraw = Serial.read();
     dataReceive[count++] = dataraw;
   }
+  
   //FF FF 02 04 F9
   //FF FF 05 01 00 00 00 __
   int checksum = 0;
@@ -227,6 +257,27 @@ void protocol(){
           break;
         case 0x04:  //home
           gotoHomePosition = true;
+//          byte dataSend[13];
+          dataSend[0] = 0xFF;
+          dataSend[1] = 0xFF;
+          dataSend[2] = (byte)10;  // length
+          dataSend[3] = (byte)3;  // instruction
+          dataSend[4] = (byte)((Position.Y>>8)&0xFF);
+          dataSend[5] = (byte)(Position.Y&0xFF);
+          dataSend[6] = (byte)((Position.A>>8)&0xFF);
+          dataSend[7] = (byte)(Position.A&0xFF);
+          dataSend[8] = (byte)((Position.B>>8)&0xFF);
+          dataSend[9] = (byte)(Position.B&0xFF);
+          dataSend[10] = (byte)Target.S;
+          dataSend[11] = Target.M? 0x01:0x00;
+          dataSend[12] = ~(dataSend[3] + dataSend[4] + dataSend[5] + dataSend[6] + dataSend[7] + dataSend[8] + dataSend[9] + dataSend[10] + dataSend[11])&0xFF;
+          for(int i = 0; i < 13 ; i++){
+            Serial.write(dataSend[i]);
+          }
+          break;
+        case 0x05:  //c_position
+          ( dataReceive[4] == 0x01 )? c_dir = true : c_dir = false;
+          Position.C += dataReceive[5];
           break;
         default:
           break;
